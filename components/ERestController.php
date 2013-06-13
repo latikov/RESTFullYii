@@ -13,6 +13,7 @@ class ERestController extends Controller
 	public $restrictedProperties = array();
 	public $restFilter = array(); 
 	public $restSort = array();
+	public $restSortDir = "ASC";
 	public $restLimit = 100; // Default limit
 	public $restOffset = 0; //Default Offset
 	public $developmentFlag = YII_DEBUG; //When set to `false' 500 erros will not return detailed messages.
@@ -40,11 +41,17 @@ class ERestController extends Controller
 		if(isset($_GET['filter']))
 			$this->restFilter = $_GET['filter'];
 
-		if(isset($_GET['sort']))
+		if(isset($_GET['sort'])){
 			$this->restSort = $_GET['sort'];
+			if(isset($_GET['dir']))
+				$this->restSortDir = $_GET['dir'];
+		}
 
 		if(isset($_GET['limit']))
 			$this->restLimit = $_GET['limit'];
+
+		if(isset($_GET['start']))
+			$this->restOffset = $_GET['start'];
 
 		if(isset($_GET['offset']))
 			$this->restOffset = $_GET['offset'];
@@ -367,15 +374,22 @@ class ERestController extends Controller
 
 	/**
 	 * Get data submitted by the client
-	 */ 
-	public function data() 
+	 */
+	public function data()
 	{
 		$request = $this->requestReader->getContents();
 		if ($request) {
-			return CJSON::decode($request);
+			if ($json_post = CJSON::decode($request)){
+				return $json_post;
+			}else{
+				parse_str($request,$variables);
+				return $variables;
+			}
+		} else {
+			return $_POST;
 		}
-		return false;
 	}
+
 
 	/**
 	 * Returns the model associated with this controller.
@@ -413,10 +427,10 @@ class ERestController extends Controller
 			if(($model->hasAttribute($var) || isset($model->metadata->relations[$var])) && !in_array($var, $this->restrictedProperties)) {
 				$model->$var = $value;
 			}
-			else {
+			/*else {
 				throw new CHttpException(406, 'Parameter \'' . $var . '\' is not allowed for model (' . get_class($model) . ')');
 				
-			}
+			}*/
 		}
 		
 		return $model;
@@ -471,17 +485,18 @@ class ERestController extends Controller
     //Attach helper behaviors
 	public function _attachBehaviors($model)
 	{
-		//Attach this behavior to help saving nested models
-		if(!array_key_exists('EActiveRecordRelationBehavior', $model->behaviors()))
-			$model->attachBehavior('EActiveRecordRelationBehavior', new EActiveRecordRelationBehavior());
+		if($model instanceof CComponent){
+				//Attach this behavior to help saving nested models
+			if(!array_key_exists('EActiveRecordRelationBehavior', $model->behaviors()))
+				$model->attachBehavior('EActiveRecordRelationBehavior', new EActiveRecordRelationBehavior());
 
-		//Attach this behavior to help outputting models and their relations as arrays
-		if(!array_key_exists('MorrayBehavior', $model->behaviors()))
-			$model->attachBehavior('MorrayBehavior', new MorrayBehavior());
+			//Attach this behavior to help outputting models and their relations as arrays
+			if(!array_key_exists('MorrayBehavior', $model->behaviors()))
+				$model->attachBehavior('MorrayBehavior', new MorrayBehavior());
 
-		if(!array_key_exists('ERestHelperScopes', $model->behaviors()))
-			$model->attachBehavior('ERestHelperScopes', new ERestHelperScopes());
-
+			if(!array_key_exists('ERestHelperScopes', $model->behaviors()))
+				$model->attachBehavior('ERestHelperScopes', new ERestHelperScopes());
+		}
 		return true;
 	}
 
@@ -592,22 +607,27 @@ class ERestController extends Controller
 		return false;
 	}
 
-	public function outputHelper($message, $results, $totalCount=0, $model=null)
+	public function outputHelper($message, $results, $totalCount=0)
 	{
-		if(is_null($model))
-			$model = lcfirst(get_class($this->model));
-		else
-			$model = lcfirst($model);	
-
-		$this->renderJson(array(
-			'success'=>true, 
-			'message'=>$message, 
-			'data'=>array(
-				'totalCount'=>$totalCount, 
-				$model=>$this->allToArray($results)
-			)
-		));
+		if(is_array($results) || $results == null){
+			$this->renderJson(array(
+				'success'=>true,
+				'message'=>$message,
+				'data'=>array(
+					'totalCount'=>$totalCount,
+					'items'=>$this->allToArray($results)
+				)
+			));
+		} else {
+			$this->_attachBehaviors($results);
+			$this->renderJson(array(
+				'success'=>true,
+				'message'=>$message,
+				'data' => $results->toArray()
+			));
+		}
 	}
+
 
 	/**
 	 * This is broken out as a separate method from actionRestList 
@@ -619,7 +639,7 @@ class ERestController extends Controller
 		$this->outputHelper( 
 			'Records Retrieved Successfully', 
 			$this->getModel()->with($this->nestedRelations)
-				->filter($this->restFilter)->orderBy($this->restSort)
+				->filter($this->restFilter)->orderBy($this->restSort, $this->restSortDir)
 				->limit($this->restLimit)->offset($this->restOffset)
 			->findAll(),
 			$this->getModel()
